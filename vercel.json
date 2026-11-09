@@ -1,0 +1,10 @@
+{
+  "buildCommand": "node scripts/build-vercel.mjs",
+  "outputDirectory": "public",
+  "functions": {"api/scraper.mjs": {"maxDuration": 300}},
+  "rewrites": [
+    {"source":"/api/v1/jobs/:path*", "destination":"/api/scraper?path=/api/v1/jobs/:path*"},
+    {"source":"/painel", "destination":"/painel.html"}
+  ],
+  "headers": [{"source":"/(.*)","headers":[{"key":"Cache-Control","value":"private, no-store"}]}]
+}

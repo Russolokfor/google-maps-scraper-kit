@@ -196,7 +196,7 @@
   function setHealth(ok) {
     const h = $("#health");
     h.className = "health " + (ok ? "ok" : "down");
-    h.lastElementChild.textContent = ok ? "scraper online" : "offline: abra o Docker Desktop";
+    h.lastElementChild.textContent = ok ? "scraper online" : "motor iniciando…";
   }
 
   async function refreshJobs() {
@@ -217,7 +217,7 @@
       if (!state.booted) { state.booted = true; openFromHash(); }
     } catch {
       setHealth(false);
-      if (!state.jobs.length) $("#jobs").innerHTML = `<p class="empty">Não consegui falar com o scraper.<br>Confira se o Docker Desktop está aberto.</p>`;
+      if (!state.jobs.length) $("#jobs").innerHTML = `<p class="empty">Não consegui falar com o scraper.<br>Aguarde alguns segundos e recarregue a página.</p>`;
     }
   }
 

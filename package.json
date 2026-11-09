@@ -1,0 +1,16 @@
+{
+  "name": "maof-maps-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "node scripts/build-vercel.mjs"
+  },
+  "dependencies": {
+    "@vercel/sandbox": "3.9.1"
+  }
+}
