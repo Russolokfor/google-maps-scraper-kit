@@ -292,7 +292,300 @@
       ? `Parar a busca “${job.name}”? O que já foi coletado se perde.`
       : `Apagar a busca “${job.name}”? Arquivos já baixados continuam no seu computador.`;
     if (!confirm(msg)) return;
-  …4604 tokens truncated…=> String(v ?? "").replace(/[\t\r\n]+/g, " ")).join("\t")).join("\n");
+    const r = await fetch(`${API}/${job.id}`, { method: "DELETE" });
+    if (!r.ok) return toast("Não consegui apagar essa busca.");
+    delete rowsCache[job.id]; delete state.stats[job.id];
+    if (state.current === job.id) closeResults();
+    toast("Busca apagada.");
+    refreshJobs();
+  }
+
+  $("#jobs").addEventListener("click", (e) => {
+    const li = e.target.closest(".job");
+    const job = li && state.jobs.find((j) => j.id === li.dataset.id);
+    if (!job) return;
+    if (e.target.closest("[data-act=delete]")) return deleteJob(job);
+    if (job.status === "ok") openResults(job, { scroll: true });
+  });
+  $("#jobs").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const li = e.target.closest(".job.ok");
+    const job = li && state.jobs.find((j) => j.id === li.dataset.id);
+    if (job) openResults(job, { scroll: true });
+  });
+
+  // ───────────────────────── form controls ─────────────────────────
+  function updateAmountHint() {
+    const min = MINUTES[state.depth] || 5;
+    $("#amount-hint").textContent = `Aproximado · leva ~${$("#email").checked ? min * 2 : min} min`;
+  }
+  $$(".seg button").forEach((b) => b.addEventListener("click", () => setDepth(+b.dataset.depth)));
+  function setDepth(d) {
+    state.depth = d;
+    const btns = $$(".seg button");
+    btns.forEach((b) => { const on = +b.dataset.depth === d; b.classList.toggle("on", on); b.setAttribute("aria-checked", on); });
+    $(".seg").style.setProperty("--idx", Math.max(0, btns.findIndex((b) => +b.dataset.depth === d)));   // slides the glass thumb
+    updateAmountHint();
+  }
+  $("#email").addEventListener("change", updateAmountHint);
+
+  function syncRadius() {
+    const km = +$("#radius").value;
+    $("#radius-val").textContent = `${km} km`;
+    $("#radius").style.setProperty("--fill-pct", `${((km - 1) / 19) * 100}%`);
+    $("#radius-hint").textContent = state.geo ? "Área em volta do local, no mapa acima." : "Digite o local para ver a área no mapa.";
+    if (state.geo) showGeoPreview(state.geo);
+  }
+  $("#radius").addEventListener("input", syncRadius);
+
+  // ───────────────────────── geocoding ─────────────────────────
+  // Prefer Brazil first ("Barra Funda" alone would otherwise land on the town in RS), then worldwide.
+  const geoCache = load("geo2", {});
+  async function nominatim(place, extra) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&accept-language=pt-BR${extra}&q=${encodeURIComponent(place)}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("geocode " + r.status);
+    return (await r.json())[0];
+  }
+  async function geocode(place) {
+    const key = place.trim().toLowerCase();
+    if (!key) return null;
+    if (geoCache[key]) return geoCache[key];
+    const hit = (await nominatim(place, "&countrycodes=br")) || (await nominatim(place, ""));
+    if (!hit) return null;
+    const a = hit.address || {};
+    const uf = (a["ISO3166-2-lvl4"] || "").split("-")[1];
+    const label = [a.suburb || a.neighbourhood || a.city_district || a.quarter, a.city || a.town || a.village || a.municipality,
+      a.country_code === "br" ? uf || a.state : [a.state, a.country].filter(Boolean).join(", ")]
+      .filter(Boolean).join(", ") || hit.display_name.split(",").slice(0, 3).join(",");
+    const g = { lat: (+hit.lat).toFixed(6), lon: (+hit.lon).toFixed(6), label };
+    geoCache[key] = g; store("geo2", geoCache);
+    return g;
+  }
+
+  let geoTimer;
+  async function checkLocation() {
+    const place = $("#location").value.trim();
+    const hint = $("#geo-status");
+    state.geo = null;
+    if (!place) { hint.className = "geo-status"; hint.textContent = ""; showGeoPreview(null); syncRadius(); return null; }
+    hint.className = "geo-status"; hint.textContent = "Localizando…";
+    try {
+      const g = await geocode(place);
+      if ($("#location").value.trim() !== place) return null;   // user kept typing
+      if (!g) {
+        hint.className = "geo-status warn"; hint.textContent = "Não achei esse lugar no mapa. A busca usa o texto digitado.";
+        showGeoPreview(null); syncRadius(); return null;
+      }
+      state.geo = g;
+      hint.className = "geo-status ok";
+      hint.textContent = "📍 " + g.label;
+      syncRadius();
+      return g;
+    } catch {
+      hint.className = "geo-status warn"; hint.textContent = "Sem acesso ao serviço de mapas. A busca usa o texto digitado.";
+      return null;
+    }
+  }
+  $("#location").addEventListener("input", () => { clearTimeout(geoTimer); geoTimer = setTimeout(checkLocation, 600); });
+  $("#keyword").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("#location").value.trim()) { e.preventDefault(); $("#location").focus(); } });
+
+  // ───────────────────────── submit ─────────────────────────
+  function showError(msg) { const e = $("#form-error"); e.textContent = msg; e.hidden = !msg; }
+
+  $("#search-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (state.submitting) return;                 // guards against double clicks
+    showError("");
+    const terms = $("#keyword").value.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+    const place = $("#location").value.trim();
+    if (!terms.length) { $("#keyword").focus(); return showError("Diga o que você procura. Ex.: dentista."); }
+    if (!place) { $("#location").focus(); return showError("Diga onde procurar. Ex.: Barra Funda, São Paulo."); }
+
+    const lang = $("#lang").value, depth = state.depth, email = $("#email").checked;
+    const keywords = terms.map((t) => `${t} ${JOINER[lang] || "em"} ${place}`);
+    const dup = state.jobs.find((j) => (j.status === "pending" || j.status === "working") && j.keywords.join("|") === keywords.join("|"));
+    if (dup && !confirm("Essa mesma busca já está rodando ou na fila. Criar outra igual?")) return;
+
+    state.submitting = true;
+    const btn = $("#submit"); btn.disabled = true; btn.querySelector(".btn-label").textContent = "Enviando…";
+    try {
+      const g = state.geo || await checkLocation();
+      const autoSecs = Math.min(3600, Math.max(300, terms.length * (120 + depth * 40) * (email ? 2 : 1)));
+      const maxMin = +$("#maxtime").value;
+      const body = {
+        name: `${terms.join(", ")} · ${place.split(",")[0].trim()}`,
+        keywords, lang, depth, email,
+        // lat/lon only bias the map viewport; the place is also in the keyword text,
+        // so an un-geocodable place still works (the API just requires *some* coordinates).
+        lat: g ? g.lat : "0", lon: g ? g.lon : "0",
+        zoom: g ? zoomFor(radiusMeters(), +g.lat) : 14, radius: radiusMeters(),
+        fast_mode: true, max_time: maxMin ? maxMin * 60 : autoSecs,
+      };
+      const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        let msg = `O scraper recusou a busca (erro ${r.status}).`;
+        try { const j = await r.json(); if (j.message) msg += ` ${j.message}`; } catch {}
+        throw new Error(msg);
+      }
+      const busy = state.jobs.some((j) => j.status === "working" || j.status === "pending");
+      toast(busy ? "Busca criada! Ela começa quando a atual terminar." : "Busca criada! Acompanhe em “Suas buscas”.", 5000);
+      store("prefs", { lang, depth, radius: +$("#radius").value });
+      $("#keyword").value = "";
+      await refreshJobs();
+      $("#sec-jobs").scrollIntoView({ block: "start" });
+    } catch (err) {
+      showError(err.message || "Não consegui criar a busca. O scraper está online?");
+    } finally {
+      state.submitting = false; btn.disabled = false;
+      btn.querySelector(".btn-label").textContent = "Iniciar busca";
+    }
+  });
+
+  // ───────────────────────── results ─────────────────────────
+  async function openResults(job, { scroll = true, announce = true } = {}) {
+    state.current = job.id; renderJobs._last = null; renderJobs();
+    history.replaceState(null, "", `#job=${job.id}`);
+    $("#open-in-map").href = `/#job=${job.id}`;
+    $("#to-map").href = `/#job=${job.id}`;
+    $("#results").hidden = false; $("#nav-results").hidden = false;
+    $("#results-title").textContent = job.name || "Resultados";
+    $("#results-sub").textContent = `${job.keywords.join(" / ")} · ${ago(job.date)}`;
+    $("#mini-kpis").innerHTML = "";
+    $("#results-table tbody").innerHTML = `<tr><td colspan="5" class="empty">Carregando…</td></tr>`;
+    $("#raw-download").href = `${API}/${job.id}/download`;
+    $("#raw-download").setAttribute("download", `${slug(job.name)}-completo.csv`);
+    if (scroll) $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+    let rows;
+    try { rows = await fetchRows(job.id); }
+    catch { $("#results-table tbody").innerHTML = `<tr><td colspan="5" class="empty">Não consegui baixar os resultados dessa busca.</td></tr>`; return; }
+    if (state.current !== job.id) return;          // user opened another one meanwhile
+    state.rows = rows;
+
+    const cats = [...new Set(rows.map((r) => r.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    const counts = Object.fromEntries(cats.map((c) => [c, rows.filter((r) => r.category === c).length]));
+    $("#cat-filter").innerHTML = `<option value="">Todas (${rows.length})</option>` + cats.map((c) => `<option value="${esc(c)}">${esc(c)} (${counts[c]})</option>`).join("");
+    $("#filter").value = ""; $("#sort").value = "";
+    $("#only-email").closest(".check").hidden = !job.email;
+    $("#only-email").checked = false;
+
+    // Only default the radius filter on when most results really are inside the circle: if the place was
+    // geocoded elsewhere (e.g. "barra funda" → Barra Funda/RS), Google still searched the typed text.
+    const hasArea = !!(job.lat && job.radius);
+    const located = rows.filter((r) => +r.latitude);
+    const share = hasArea && located.length ? located.filter((r) => distance(job.lat, job.lon, +r.latitude, +r.longitude) <= job.radius).length / located.length : 0;
+    $("#in-radius-wrap").hidden = !hasArea;
+    $("#in-radius").checked = hasArea && share >= 0.5;
+    $("#in-radius-label").textContent = hasArea ? `dentro de ${Math.round(job.radius / 100) / 10} km` : "";
+    if (hasArea && share < 0.5 && announce) toast("A maioria dos resultados ficou fora do raio (o local pode ter sido entendido diferente). Filtro de raio desligado.", 7000);
+
+    const n = (f) => rows.filter(f).length;
+    const rated = rows.filter((r) => +r.review_rating);
+    const avg = rated.length ? rated.reduce((a, r) => a + +r.review_rating, 0) / rated.length : 0;
+    const mini = [
+      [fmt(rows.length), "empresas"],
+      [fmt(n((r) => r.phone)), "com telefone"],
+      [fmt(n((r) => whatsapp(r.phone))), "com WhatsApp"],
+      [fmt(n((r) => r.website)), "com site"],
+      ...(job.email ? [[fmt(n((r) => emailsOf(r).length)), "com e-mail"]] : []),
+      [avg ? avg.toFixed(1).replace(".", ",") + " ★" : "—", "nota média"],
+    ];
+    $("#mini-kpis").innerHTML = mini.map(([v, l]) => `<div class="mini"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+    renderResults();
+  }
+
+  function closeResults() {
+    state.current = null; state.rows = []; state.visible = [];
+    history.replaceState(null, "", location.pathname);
+    $("#to-map").href = "/";
+    $("#results").hidden = true; $("#nav-results").hidden = true;
+    renderJobs._last = null; renderJobs();
+  }
+  $("#results-close").addEventListener("click", closeResults);
+
+  function visibleRows() {
+    const job = currentJob();
+    const q = $("#filter").value.trim().toLowerCase();
+    const cat = $("#cat-filter").value;
+    const area = $("#in-radius").checked && job.lat && job.radius;
+    const onlyPhone = $("#only-phone").checked, onlyEmail = $("#only-email").checked;
+    let rows = state.rows.filter((r) =>
+      (!area || !+r.latitude || distance(job.lat, job.lon, +r.latitude, +r.longitude) <= job.radius) &&
+      (!cat || r.category === cat) && (!onlyPhone || r.phone) && (!onlyEmail || emailsOf(r).length) &&
+      (!q || [r.title, r.category, r.address, r.phone, r.website, r.emails].join(" ").toLowerCase().includes(q)));
+    if ($("#dedupe").checked) {
+      const seen = new Set();
+      rows = rows.filter((r) => {
+        const k = digits(r.phone) || r.place_id || r.link || r.title + r.address;
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      });
+    }
+    const [key, dirS] = $("#sort").value.split(":");
+    if (key) {
+      const dir = +dirS;
+      rows = [...rows].sort((a, b) => key === "title"
+        ? String(a.title).localeCompare(String(b.title), "pt-BR") * dir
+        : ((+a[key] || 0) - (+b[key] || 0) || (+a.review_count || 0) - (+b.review_count || 0)) * dir);
+    }
+    return rows;
+  }
+
+  function renderResults() {
+    const rows = (state.visible = visibleRows());
+    $("#export-count").textContent = `${fmt(rows.length)} de ${fmt(state.rows.length)} empresas`;
+    $("#results-table tbody").innerHTML = rows.length ? rows.map((r, i) => {
+      const wa = whatsapp(r.phone);
+      const rating = +r.review_rating;
+      const site = r.website ? r.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "") : "";
+      return `<tr data-i="${i}">
+        <td><div class="co-name">${esc(r.title)}</div><div class="co-cat">${esc(r.category)}</div></td>
+        <td><div class="contact">
+          ${r.phone ? `<span>${esc(r.phone)}</span>` : `<span class="none">sem telefone</span>`}
+          ${wa ? `<a class="wa" href="${wa}" target="_blank" rel="noopener">WhatsApp ↗</a>` : ""}
+          ${emailsOf(r).map((m) => `<a href="mailto:${esc(m)}">${esc(m)}</a>`).join("")}
+          ${site ? `<a href="${esc(r.website)}" target="_blank" rel="noopener">${esc(site.length > 34 ? site.slice(0, 34) + "…" : site)}</a>` : ""}
+        </div></td>
+        <td class="num">${rating ? `<span class="stars">★</span> ${rating.toFixed(1).replace(".", ",")}<span class="reviews">${fmt(r.review_count)}</span>` : "—"}</td>
+        <td class="addr">${esc(r.address.replace(r.title + " - ", ""))}</td>
+        <td class="row-actions">${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">Maps ↗</a>` : ""}</td>
+      </tr>`;
+    }).join("") : `<tr><td colspan="5" class="empty">Nenhuma empresa com esses filtros.</td></tr>`;
+    plotRows(rows);
+  }
+
+  ["#filter", "#cat-filter", "#sort", "#in-radius", "#dedupe", "#only-phone", "#only-email"].forEach((s) => $(s).addEventListener("input", renderResults));
+  $("#results-table tbody").addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    const tr = e.target.closest("tr[data-i]");
+    if (!tr) return;
+    const i = +tr.dataset.i, m = markers[i];
+    highlight(i, false);
+    if (m) { map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 16), { duration: 0.6 }); m.openPopup(); }
+  });
+
+  // ───────────────────────── export ─────────────────────────
+  const EXPORT_HEAD = ["Nome", "Categoria", "Telefone", "WhatsApp", "E-mail", "Site", "Nota", "Avaliações", "Endereço", "Link Google Maps"];
+  const exportRow = (r) => [
+    r.title, r.category, r.phone, whatsapp(r.phone) || "", emailsOf(r).join(", "), r.website,
+    +r.review_rating ? (+r.review_rating).toFixed(1).replace(".", ",") : "", r.review_count, r.address, r.link,
+  ];
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-export]");
+    if (!btn) return;
+    const rows = state.visible.map(exportRow);
+    const base = slug(currentJob().name || "resultados");
+    const kind = btn.dataset.export;
+    if (kind === "excel") {
+      // Excel pt-BR expects ';' as separator; the BOM makes it read UTF-8 accents correctly.
+      saveFile(`${base}.csv`, "﻿" + toCSV(EXPORT_HEAD, rows, ";"), "text/csv;charset=utf-8");
+      toast(`${rows.length} empresas baixadas. Dê dois cliques no arquivo para abrir no Excel.`);
+    } else if (kind === "sheets") {
+      saveFile(`${base}-sheets.csv`, "﻿" + toCSV(EXPORT_HEAD, rows, ","), "text/csv;charset=utf-8");
+      toast("Baixado. No Google Sheets: Arquivo → Importar → Upload.", 6000);
+    } else if (kind === "copy") {
+      const tsv = [EXPORT_HEAD, ...rows].map((r) => r.map((v) => String(v ?? "").replace(/[\t\r\n]+/g, " ")).join("\t")).join("\n");
       try { await navigator.clipboard.writeText(tsv); toast(`${rows.length} linhas copiadas. Cole (Ctrl+V) no Sheets ou no Excel.`); }
       catch { toast("O navegador bloqueou a cópia. Use os botões de download."); }
     }

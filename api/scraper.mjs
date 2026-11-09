@@ -29,7 +29,7 @@ export default async function handler(req, res) {
     if(req.method==='POST') {
       const input=typeof req.body==='string'?JSON.parse(req.body):req.body;
       if(!input || !Array.isArray(input.keywords) || input.keywords.length<1 || input.keywords.length>3 || input.keywords.some(k=>typeof k!=='string'||k.length>200)) return res.status(400).json({message:'Use entre 1 e 3 termos por busca.'});
-      body=JSON.stringify({...input,depth:Math.min(5,Math.max(1,Number(input.depth)||1)),max_time:Math.min(300,Math.max(60,Number(input.max_time)||300))});
+      body=JSON.stringify({...input,fast_mode:true,depth:Math.min(5,Math.max(1,Number(input.depth)||1)),max_time:Math.min(300,Math.max(60,Number(input.max_time)||300))});
     }
     const command=await s.runCommand('python3',['-c',bridge,JSON.stringify({path,method:req.method,body})]);
     if(command.exitCode!==0) throw new Error((await command.stderr()).slice(-1000));
@@ -38,6 +38,6 @@ export default async function handler(req, res) {
     res.status(result.status).send(Buffer.from(result.body,'base64'));
   } catch(error) {
     console.error('scraper bridge:',error.message);
-    res.status(503).json({message:'O motor não respondeu. Aguarde alguns segundos e tente novamente.',detail:error.message.slice(0,300)});
+    res.status(503).json({message:'O motor não respondeu. Aguarde alguns segundos e tente novamente.'});
   }
 }

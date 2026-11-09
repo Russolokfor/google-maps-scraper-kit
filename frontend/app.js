@@ -404,7 +404,7 @@
         // so an un-geocodable place still works (the API just requires *some* coordinates).
         lat: g ? g.lat : "0", lon: g ? g.lon : "0",
         zoom: g ? zoomFor(radiusMeters(), +g.lat) : 14, radius: radiusMeters(),
-        fast_mode: false, max_time: maxMin ? maxMin * 60 : autoSecs,
+        fast_mode: true, max_time: maxMin ? maxMin * 60 : autoSecs,
       };
       const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!r.ok) {

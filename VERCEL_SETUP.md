@@ -16,7 +16,7 @@ O Docker Compose original continua disponível para instalação local, mas não
 
 Abra https://maof-maps-scraper.vercel.app e entre com sua conta Vercel.
 Em “o que”, informe `barbearias`; em “onde”, `Goiânia, Goiás`.
-Comece na profundidade 1, sem extração de e-mails. Clique em Pesquisar, espere terminar e exporte CSV.
+O modo rápido é usado por padrão, pois o modo completo apresentou falhas na leitura do Google. Comece na profundidade 1, sem extração de e-mails. Clique em Pesquisar, espere terminar e exporte CSV.
 O painel fica em `/painel`.
 
 Limites da adaptação: 3 termos, profundidade máxima 5, 300 segundos por busca, download de até 3 MB.
@@ -40,7 +40,7 @@ Criar busca pequena:
 ```bash
 vercel curl https://maof-maps-scraper.vercel.app/api/v1/jobs -- \
   --request POST --header 'Content-Type: application/json' \
-  --data '{"name":"Barbearias Goiânia","keywords":["barbearias em Goiânia"],"lang":"pt","lat":"-16.6869","lon":"-49.2648","zoom":14,"radius":5000,"depth":1,"email":false,"max_time":300}'
+  --data '{"name":"Barbearias Goiânia","keywords":["barbearias em Goiânia"],"lang":"pt","lat":"-16.6869","lon":"-49.2648","zoom":14,"radius":5000,"depth":1,"email":false,"fast_mode":true,"max_time":300}'
 ```
 
 A resposta contém o `id`. Consulte a lista até `Status` ser `ok`, então substitua `ID_DA_BUSCA`:
