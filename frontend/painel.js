@@ -582,8 +582,7 @@
       saveFile(`${base}.csv`, "﻿" + toCSV(EXPORT_HEAD, rows, ";"), "text/csv;charset=utf-8");
       toast(`${rows.length} empresas baixadas. Dê dois cliques no arquivo para abrir no Excel.`);
     } else if (kind === "sheets") {
-      saveFile(`${base}-sheets.csv`, "﻿" + toCSV(EXPORT_HEAD, rows, ","), "text/csv;charset=utf-8");
-      toast("Baixado. No Google Sheets: Arquivo → Importar → Upload.", 6000);
+      await window.MaofSheets.export(currentJob().name || "Resultados", rows);
     } else if (kind === "copy") {
       const tsv = [EXPORT_HEAD, ...rows].map((r) => r.map((v) => String(v ?? "").replace(/[\t\r\n]+/g, " ")).join("\t")).join("\n");
       try { await navigator.clipboard.writeText(tsv); toast(`${rows.length} linhas copiadas. Cole (Ctrl+V) no Sheets ou no Excel.`); }

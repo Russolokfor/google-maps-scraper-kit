@@ -157,7 +157,7 @@
           <span id="export-count"></span>
           <div class="export-actions" role="group" aria-label="Exportar">
             <button class="pill-btn" data-export="excel" type="button" title="Baixa um .csv que abre direto no Excel em português">Excel</button>
-            <button class="pill-btn" data-export="sheets" type="button" title="Baixa um .csv para importar no Google Sheets">Sheets</button>
+            <button class="pill-btn" data-export="sheets" type="button" title="Cria uma planilha formatada com acompanhamento de contatos no seu Google Drive">Abrir no Google Sheets</button>
             <button class="pill-btn" data-export="copy" type="button" title="Copia a tabela para colar numa planilha">Copiar</button>
           </div>
         </div>
@@ -205,7 +205,7 @@
             </div>
             <div class="export-actions">
               <button class="pill-btn filled" data-export="excel" type="button" title="Arquivo .csv que abre direto no Excel em português">Baixar p/ Excel</button>
-              <button class="pill-btn" data-export="sheets" type="button" title="Arquivo .csv para o Google Sheets: Arquivo → Importar → Upload">Baixar p/ Sheets</button>
+              <button class="pill-btn" data-export="sheets" type="button" title="Cria e abre uma planilha formatada no Google Sheets">Abrir no Google Sheets</button>
               <button class="pill-btn" data-export="copy" type="button" title="Copia a tabela: é só colar (Ctrl+V) numa planilha">Copiar</button>
               <a id="raw-download" class="pill-btn plain" href="#" title="Arquivo original do scraper com todas as ~35 colunas">CSV completo</a>
             </div>
@@ -227,6 +227,8 @@
 
   <div id="toast" class="toast glass" hidden role="status"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script src="/app/google-sheets.js"></script>
   <script src="/app/app.js"></script>
 </body>
 </html>

@@ -210,7 +210,7 @@
         <span><b id="export-count"></b> <span class="help inline">· a exportação leva só as linhas filtradas</span></span>
         <div class="export-buttons">
           <button class="btn filled" data-export="excel" type="button" title="Arquivo .csv que abre direto no Excel em português (dois cliques)">Baixar para Excel</button>
-          <button class="btn" data-export="sheets" type="button" title="Arquivo .csv para o Google Sheets: Arquivo → Importar → Upload">Google Sheets</button>
+          <button class="btn" data-export="sheets" type="button" title="Cria e abre uma planilha formatada no Google Sheets">Abrir no Google Sheets</button>
           <button class="btn" data-export="copy" type="button" title="Copia a tabela: é só colar (Ctrl+V) numa planilha">Copiar</button>
           <a id="raw-download" class="btn btn-ghost" href="#" title="Arquivo original do scraper com todas as ~35 colunas">CSV completo</a>
         </div>
@@ -241,6 +241,8 @@
 
   <div id="toast" class="toast" hidden role="status"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script src="/app/google-sheets.js"></script>
   <script src="/app/painel.js"></script>
 </body>
 </html>

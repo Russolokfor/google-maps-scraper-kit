@@ -55,3 +55,17 @@ Alterações no branch `master` geram novas publicações via integração GitHu
 A construção usa `npm ci` e `npm run build`; não precisa de Docker no seu computador.
 Não coloque credenciais ou resultados no GitHub.
 Se o snapshot expirar, recrie o sandbox e instale o motor antes de retomar o uso.
+
+## Exportação direta ao Google Sheets
+
+O botão **Abrir no Google Sheets** dos modos Mapa e Painel cria uma planilha nativa no Drive e abre o editor. Os filtros visíveis são respeitados. O CSV continua disponível no botão Excel.
+
+Antes do primeiro uso, configure um cliente OAuth do tipo Aplicativo da Web no Google Cloud, habilite a Sheets API e autorize a origem `https://maof-maps-scraper.vercel.app`. No painel, clique em **Configurar Google** e salve apenas o ID público do cliente. Nunca informe o client secret.
+
+O guia detalhado está em `/app/google-sheets-setup.html`. A configuração inicial do projeto Google ainda requer a conta do proprietário; não é herdada da conexão do ChatGPT.
+
+A exportação usa Google Identity Services e escopo `drive.file`. Tokens ficam apenas na memória da aba. Cada clique cria uma nova planilha, preservando os status das planilhas anteriores.
+
+As colunas incluem Empresa, Categoria, Telefone, WhatsApp, E-mail, Site, Nota, Avaliações, Endereço, Google Maps, Status do contato, Data do contato, Responsável, Próximo retorno e Observações. Status disponíveis: Não contatado, Aguardando resposta, Respondeu, Não respondeu, Retornar depois, Sem interesse e Cliente fechado.
+
+Validação local: `node scripts/test-google-sheets.mjs`. O teste simula autorização e API do Google; a criação real deve ser verificada após configurar o cliente OAuth.
