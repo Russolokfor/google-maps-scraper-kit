@@ -60,7 +60,7 @@ const startEngine = async (sandbox) => {
       'echo "Scraper did not become healthy. Recent engine log:"',
       'tail -n 80 "' + LOG_FILE + '" 2>/dev/null || true',
       'exit 1'
-    ].join('; '))
+    ].join('\\n'))
   ].join(' && ');
 
   await runChecked(sandbox, 'bash', ['-lc', script]);
