@@ -108,13 +108,18 @@ const startEngine = async (sandbox) => {
 
 // The scraper process does not survive a Sandbox session stop. Reinstall only
 // when its files are absent, and start + health-check it on every new session.
-const getEngine = () => Sandbox.getOrCreate({
-  name: 'maps-engine',
-  resume: true,
-  timeout: 900_000,
-  onCreate: startEngine,
-  onResume: startEngine
-});
+const getEngine = async () => {
+  const sandbox = await Sandbox.getOrCreate({
+    name: 'maps-engine',
+    resume: true,
+    timeout: 900_000
+  });
+
+  // Lifecycle hooks alone are insufficient: a session can remain active after
+  // its child process exits. Verify/restart the engine on every API request.
+  await startEngine(sandbox);
+  return sandbox;
+};
 
 // Only calls the private, fixed loopback service. No ports are exposed publicly.
 const bridge = `import sys,json,urllib.request,urllib.error,base64
