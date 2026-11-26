@@ -21,40 +21,21 @@ const runChecked = async (sandbox, cmd, args, options = {}) => {
 // Mirrors the upstream project's supported Linux installation path:
 // verified release binary + Playwright browser runtime + native Linux libraries.
 const installEngine = async (sandbox) => {
-  const check = await sandbox.runCommand({
-    cmd: 'bash',
-    args: ['-lc', `test -x "${SCRAPER_BIN}" && test -d "${PLAYWRIGHT_ENV.PLAYWRIGHT_BROWSERS_PATH}" && test -d "${PLAYWRIGHT_ENV.PLAYWRIGHT_DRIVER_PATH}"`],
-    env: PLAYWRIGHT_ENV
-  });
-  if (check.exitCode === 0) return;
+  const script = [
+    'set -euo pipefail',
+    'mkdir -p /vercel/sandbox/bin /vercel/sandbox/mapsdata /vercel/sandbox/.cache/ms-playwright /vercel/sandbox/.cache/ms-playwright-go',
+    'flock /tmp/maof-scraper-install.lock bash -lc ' + JSON.stringify([
+      'set -euo pipefail',
+      `if test -x "${SCRAPER_BIN}" && test -f /vercel/sandbox/.maps-engine-installed-v1.21.0; then exit 0; fi`,
+      'sudo apt-get update',
+      'sudo apt-get install -y ca-certificates curl libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2 libdrm2 libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64',
+      `curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/${SCRAPER_VERSION}/install.sh -o /vercel/sandbox/install-google-maps-scraper.sh`,
+      'bash /vercel/sandbox/install-google-maps-scraper.sh --version ' + SCRAPER_VERSION + ' --install-dir /vercel/sandbox/bin',
+      'touch /vercel/sandbox/.maps-engine-installed-v1.21.0'
+    ].join(' && '))
+  ].join(' && ');
 
-  await runChecked(sandbox, 'bash', ['-lc',
-    'apt-get update && apt-get install -y ca-certificates curl ' +
-    'libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 ' +
-    'libdbus-1-3 libxkbcommon0 libatspi2.0-0 libx11-6 libxcomposite1 ' +
-    'libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 ' +
-    'libcairo2 libasound2'
-  ], { sudo: true });
-
-  await runChecked(sandbox, 'bash', ['-lc',
-    'mkdir -p /vercel/sandbox/bin /vercel/sandbox/mapsdata ' +
-    '/vercel/sandbox/.cache/ms-playwright /vercel/sandbox/.cache/ms-playwright-go'
-  ]);
-
-  await runChecked(sandbox, 'curl', [
-    '-fsSL',
-    `https://raw.githubusercontent.com/gosom/google-maps-scraper/${SCRAPER_VERSION}/install.sh`,
-    '-o',
-    '/vercel/sandbox/install-google-maps-scraper.sh'
-  ]);
-
-  await runChecked(sandbox, 'bash', [
-    '/vercel/sandbox/install-google-maps-scraper.sh',
-    '--version',
-    SCRAPER_VERSION,
-    '--install-dir',
-    '/vercel/sandbox/bin'
-  ]);
+  await runChecked(sandbox, 'bash', ['-lc', script]);
 
   const version = await sandbox.runCommand({
     cmd: SCRAPER_BIN,
