@@ -28,7 +28,7 @@ const installEngine = async (sandbox) => {
       'set -euo pipefail',
       `if test -x "${SCRAPER_BIN}" && test -f /vercel/sandbox/.maps-engine-installed-v1.21.0; then exit 0; fi`,
       'sudo apt-get update',
-      'sudo apt-get install -y ca-certificates curl libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2 libdrm2 libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64',
+      'sudo apt-get install -y ca-certificates curl libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64',
       `curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/${SCRAPER_VERSION}/install.sh -o /vercel/sandbox/install-google-maps-scraper.sh`,
       'bash /vercel/sandbox/install-google-maps-scraper.sh --version ' + SCRAPER_VERSION + ' --install-dir /vercel/sandbox/bin',
       'touch /vercel/sandbox/.maps-engine-installed-v1.21.0'
@@ -47,14 +47,6 @@ const installEngine = async (sandbox) => {
   }
 };
 
-const isEngineHealthy = async (sandbox) => {
-  const result = await sandbox.runCommand('curl', [
-    '-fsS',
-    '--max-time', '4',
-    'http://127.0.0.1:8080/api/v1/jobs'
-  ]);
-  return result.exitCode === 0;
-};
 
 const startEngine = async (sandbox) => {
   await installEngine(sandbox);
