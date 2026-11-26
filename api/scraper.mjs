@@ -1,9 +1,116 @@
 import { Sandbox } from '@vercel/sandbox';
 
-const start = async (s) => {
-  const command = await s.runCommand({cmd:'bash', args:['-lc', 'curl -sf http://127.0.0.1:8080/api/v1/jobs >/dev/null || (nohup /vercel/scraper -web -addr 127.0.0.1:8080 -data-folder /vercel/mapsdata >> /vercel/scraper.log 2>&1 </dev/null &)' ]});
-  if(command.exitCode !== 0) throw new Error('Não foi possível iniciar o motor.');
+const SCRAPER_VERSION = 'v1.21.0';
+const SCRAPER_BIN = '/vercel/sandbox/bin/google_maps_scraper-1.21.0-linux-amd64';
+const DATA_DIR = '/vercel/sandbox/mapsdata';
+const LOG_FILE = '/vercel/sandbox/google-maps-scraper.log';
+const PLAYWRIGHT_ENV = {
+  PLAYWRIGHT_BROWSERS_PATH: '/vercel/sandbox/.cache/ms-playwright',
+  PLAYWRIGHT_DRIVER_PATH: '/vercel/sandbox/.cache/ms-playwright-go'
 };
+
+const runChecked = async (sandbox, cmd, args, options = {}) => {
+  const result = await sandbox.runCommand({ cmd, args, env: PLAYWRIGHT_ENV, ...options });
+  if (result.exitCode !== 0) {
+    const stderr = await result.stderr();
+    throw new Error(`${cmd} failed (${result.exitCode}): ${stderr.slice(-3000)}`);
+  }
+  return result;
+};
+
+// Mirrors the upstream project's supported Linux installation path:
+// verified release binary + Playwright browser runtime + native Linux libraries.
+const installEngine = async (sandbox) => {
+  const check = await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', `test -x "${SCRAPER_BIN}" && test -d "${PLAYWRIGHT_ENV.PLAYWRIGHT_BROWSERS_PATH}" && test -d "${PLAYWRIGHT_ENV.PLAYWRIGHT_DRIVER_PATH}"`],
+    env: PLAYWRIGHT_ENV
+  });
+  if (check.exitCode === 0) return;
+
+  await runChecked(sandbox, 'bash', ['-lc',
+    'apt-get update && apt-get install -y ca-certificates curl ' +
+    'libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 ' +
+    'libdbus-1-3 libxkbcommon0 libatspi2.0-0 libx11-6 libxcomposite1 ' +
+    'libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 ' +
+    'libcairo2 libasound2'
+  ], { sudo: true });
+
+  await runChecked(sandbox, 'bash', ['-lc',
+    'mkdir -p /vercel/sandbox/bin /vercel/sandbox/mapsdata ' +
+    '/vercel/sandbox/.cache/ms-playwright /vercel/sandbox/.cache/ms-playwright-go'
+  ]);
+
+  await runChecked(sandbox, 'curl', [
+    '-fsSL',
+    `https://raw.githubusercontent.com/gosom/google-maps-scraper/${SCRAPER_VERSION}/install.sh`,
+    '-o',
+    '/vercel/sandbox/install-google-maps-scraper.sh'
+  ]);
+
+  await runChecked(sandbox, 'bash', [
+    '/vercel/sandbox/install-google-maps-scraper.sh',
+    '--version',
+    SCRAPER_VERSION,
+    '--install-dir',
+    '/vercel/sandbox/bin'
+  ]);
+
+  const version = await sandbox.runCommand({
+    cmd: SCRAPER_BIN,
+    args: ['-version'],
+    env: PLAYWRIGHT_ENV
+  });
+  if (version.exitCode !== 0 || !(await version.stdout()).trim().includes(SCRAPER_VERSION)) {
+    throw new Error('A versão instalada do Google Maps Scraper não passou na validação.');
+  }
+};
+
+const isEngineHealthy = async (sandbox) => {
+  const result = await sandbox.runCommand('curl', [
+    '-fsS',
+    '--max-time', '4',
+    'http://127.0.0.1:8080/api/v1/jobs'
+  ]);
+  return result.exitCode === 0;
+};
+
+const startEngine = async (sandbox) => {
+  await installEngine(sandbox);
+  if (await isEngineHealthy(sandbox)) return;
+
+  await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc',
+      `exec "${SCRAPER_BIN}" -web -addr 127.0.0.1:8080 -data-folder "${DATA_DIR}" >> "${LOG_FILE}" 2>&1`
+    ],
+    env: PLAYWRIGHT_ENV,
+    detached: true
+  });
+
+  const ready = await sandbox.runCommand('bash', [
+    '-lc',
+    'for i in $(seq 1 45); do ' +
+    'if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi; ' +
+    'sleep 1; done; ' +
+    'echo "Scraper did not become healthy. Recent engine log:"; ' +
+    'tail -n 80 "' + LOG_FILE + '" 2>/dev/null || true; exit 1'
+  ], { env: PLAYWRIGHT_ENV });
+
+  if (ready.exitCode !== 0) {
+    throw new Error((await ready.stderr()).slice(-3000) || (await ready.stdout()).slice(-5000));
+  }
+};
+
+// The scraper process does not survive a Sandbox session stop. Reinstall only
+// when its files are absent, and start + health-check it on every new session.
+const getEngine = () => Sandbox.getOrCreate({
+  name: 'maps-engine',
+  resume: true,
+  timeout: 900_000,
+  onCreate: startEngine,
+  onResume: startEngine
+});
 
 // Only calls the private, fixed loopback service. No ports are exposed publicly.
 const bridge = `import sys,json,urllib.request,urllib.error,base64
@@ -19,32 +126,48 @@ print(json.dumps({'status':s.status,'type':s.headers.get('Content-Type','applica
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'private, no-store');
-  const path = (new URL(req.url,'http://localhost').searchParams.get('path') || '/api/v1/jobs').replace(/\/$/, '');
-  if(!/^\/api\/v1\/jobs(?:\/[a-f0-9-]+(?:\/download)?)?$/.test(path) || !['GET','POST','DELETE'].includes(req.method)) return res.status(400).json({message:'Operação inválida.'});
-  if(req.method==='POST' && path!=='/api/v1/jobs') return res.status(405).end();
+  const path = (new URL(req.url, 'http://localhost').searchParams.get('path') || '/api/v1/jobs').replace(/\/$/, '');
+  if (!/^\/api\/v1\/jobs(?:\/[a-f0-9-]+(?:\/download)?)?$/.test(path) || !['GET', 'POST', 'DELETE'].includes(req.method)) {
+    return res.status(400).json({ message: 'Operação inválida.' });
+  }
+  if (req.method === 'POST' && path !== '/api/v1/jobs') return res.status(405).end();
+
   try {
-    // getOrCreate recreates a named Sandbox if its persisted snapshot has expired
-    // or is missing, instead of failing every request with SNAPSHOT_NOT_FOUND (410).
-    // Start the scraper on both the first boot and every resumed session.
-    const s = await Sandbox.getOrCreate({
-      name: 'maps-engine',
-      resume: true,
-      onCreate: start,
-      onResume: start
-    });
-    let body=null;
-    if(req.method==='POST') {
-      const input=typeof req.body==='string'?JSON.parse(req.body):req.body;
-      if(!input || !Array.isArray(input.keywords) || input.keywords.length<1 || input.keywords.length>3 || input.keywords.some(k=>typeof k!=='string'||k.length>200)) return res.status(400).json({message:'Use entre 1 e 3 termos por busca.'});
-      body=JSON.stringify({...input,fast_mode:true,depth:Math.min(5,Math.max(1,Number(input.depth)||1)),max_time:Math.min(300,Math.max(60,Number(input.max_time)||300))});
+    const sandbox = await getEngine();
+    let body = null;
+
+    if (req.method === 'POST') {
+      const input = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      if (!input || !Array.isArray(input.keywords) || input.keywords.length < 1 || input.keywords.length > 3 ||
+          input.keywords.some(k => typeof k !== 'string' || k.trim().length === 0 || k.length > 200)) {
+        return res.status(400).json({ message: 'Use entre 1 e 3 termos válidos por busca.' });
+      }
+
+      body = JSON.stringify({
+        ...input,
+        fast_mode: true,
+        depth: Math.min(5, Math.max(1, Number(input.depth) || 1)),
+        max_time: Math.min(300, Math.max(180, Number(input.max_time) || 300))
+      });
     }
-    const command=await s.runCommand('python3',['-c',bridge,JSON.stringify({path,method:req.method,body})]);
-    if(command.exitCode!==0) throw new Error((await command.stderr()).slice(-1000));
-    const result=JSON.parse(await command.stdout());
-    res.setHeader('Content-Type',result.type);
-    res.status(result.status).send(Buffer.from(result.body,'base64'));
-  } catch(error) {
-    console.error('scraper bridge:',error.message);
-    res.status(503).json({message:'O motor não respondeu. Aguarde alguns segundos e tente novamente.'});
+
+    const command = await sandbox.runCommand('python3', ['-c', bridge, JSON.stringify({
+      path,
+      method: req.method,
+      body
+    })]);
+
+    if (command.exitCode !== 0) {
+      throw new Error((await command.stderr()).slice(-3000) || 'Falha na comunicação com o motor.');
+    }
+
+    const result = JSON.parse(await command.stdout());
+    res.setHeader('Content-Type', result.type);
+    return res.status(result.status).send(Buffer.from(result.body, 'base64'));
+  } catch (error) {
+    console.error('scraper bridge:', error?.stack || error?.message || String(error));
+    return res.status(503).json({
+      message: 'O motor de pesquisa está indisponível. Tente novamente em instantes.'
+    });
   }
 }
