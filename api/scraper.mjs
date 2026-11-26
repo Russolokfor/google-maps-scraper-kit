@@ -4,9 +4,12 @@ const SCRAPER_VERSION = 'v1.21.0';
 const SCRAPER_BIN = '/vercel/sandbox/bin/google_maps_scraper-1.21.0-linux-amd64';
 const DATA_DIR = '/vercel/sandbox/mapsdata';
 const LOG_FILE = '/vercel/sandbox/google-maps-scraper.log';
+const INSTALL_LOG = '/vercel/sandbox/google-maps-scraper-install.log';
+const INSTALL_MARKER = '/vercel/sandbox/.maps-engine-installed-v1.21.0';
 const PLAYWRIGHT_ENV = {
   PLAYWRIGHT_BROWSERS_PATH: '/vercel/sandbox/.cache/ms-playwright',
-  PLAYWRIGHT_DRIVER_PATH: '/vercel/sandbox/.cache/ms-playwright-go'
+  PLAYWRIGHT_DRIVER_PATH: '/vercel/sandbox/.cache/ms-playwright-go',
+  DEBIAN_FRONTEND: 'noninteractive'
 };
 
 const runChecked = async (sandbox, cmd, args, options = {}) => {
@@ -18,65 +21,85 @@ const runChecked = async (sandbox, cmd, args, options = {}) => {
   return result;
 };
 
-// Mirrors the upstream project's supported Linux installation path:
-// verified release binary + Playwright browser runtime + native Linux libraries.
+// Install asynchronously: the frontend polls this endpoint every few seconds,
+// so a long apt/Playwright install must not hold a serverless request open.
 const installEngine = async (sandbox) => {
-  const script = [
-    'set -euo pipefail',
-    'mkdir -p /vercel/sandbox/bin /vercel/sandbox/mapsdata /vercel/sandbox/.cache/ms-playwright /vercel/sandbox/.cache/ms-playwright-go',
-    'flock /tmp/maof-scraper-install.lock bash -lc ' + JSON.stringify([
-      'set -euo pipefail',
-      `if test -x "${SCRAPER_BIN}" && test -f /vercel/sandbox/.maps-engine-installed-v1.21.0; then exit 0; fi`,
-      'sudo apt-get update',
-      'sudo apt-get install -y ca-certificates curl libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64',
-      `curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/${SCRAPER_VERSION}/install.sh -o /vercel/sandbox/install-google-maps-scraper.sh`,
-      'bash /vercel/sandbox/install-google-maps-scraper.sh --version ' + SCRAPER_VERSION + ' --install-dir /vercel/sandbox/bin',
-      'touch /vercel/sandbox/.maps-engine-installed-v1.21.0'
-    ].join(' && '))
-  ].join(' && ');
-
-  await runChecked(sandbox, 'bash', ['-lc', script]);
-
-  const version = await sandbox.runCommand({
-    cmd: SCRAPER_BIN,
-    args: ['-version'],
+  const check = await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', `test -x "${SCRAPER_BIN}" && test -f "${INSTALL_MARKER}"`],
     env: PLAYWRIGHT_ENV
   });
-  if (version.exitCode !== 0 || !(await version.stdout()).trim().includes(SCRAPER_VERSION)) {
-    throw new Error('A versão instalada do Google Maps Scraper não passou na validação.');
-  }
+  if (check.exitCode === 0) return true;
+
+  const installScript = [
+    'set -euo pipefail',
+    'mkdir -p /vercel/sandbox/bin /vercel/sandbox/mapsdata /vercel/sandbox/.cache/ms-playwright /vercel/sandbox/.cache/ms-playwright-go',
+    'sudo env DEBIAN_FRONTEND=noninteractive apt-get update',
+    'sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64',
+    `curl -fsSL https://raw.githubusercontent.com/gosom/google-maps-scraper/${SCRAPER_VERSION}/install.sh -o /vercel/sandbox/install-google-maps-scraper.sh`,
+    `bash /vercel/sandbox/install-google-maps-scraper.sh --version ${SCRAPER_VERSION} --install-dir /vercel/sandbox/bin`,
+    `"${SCRAPER_BIN}" -version | grep -F "${SCRAPER_VERSION}"`,
+    `touch "${INSTALL_MARKER}"`
+  ].join(' && ');
+
+  const command = 'flock -n /tmp/maof-scraper-install.lock bash -lc ' +
+    JSON.stringify(installScript) +
+    ' >> ' + JSON.stringify(INSTALL_LOG) + ' 2>&1';
+
+  // Non-blocking lock prevents parallel page polls from starting duplicate
+  // apt installs. The detached installer continues after this HTTP request.
+  await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', command],
+    env: PLAYWRIGHT_ENV,
+    detached: true
+  });
+  return false;
 };
 
-
 const startEngine = async (sandbox) => {
-  await installEngine(sandbox);
+  const installed = await installEngine(sandbox);
+  if (!installed) return false;
 
-  const startup = [
+  const health = await sandbox.runCommand('curl', [
+    '-fsS',
+    '--max-time', '3',
+    'http://127.0.0.1:8080/api/v1/jobs'
+  ]);
+  if (health.exitCode === 0) return true;
+
+  const startupScript = [
     'if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi',
     `nohup "${SCRAPER_BIN}" -web -addr 127.0.0.1:8080 -data-folder "${DATA_DIR}" >> "${LOG_FILE}" 2>&1 </dev/null &`,
     'for i in {1..45}; do if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi; sleep 1; done',
-    'echo "Scraper did not become healthy. Recent engine log:"',
+    'echo "Scraper did not become healthy after startup."',
     'tail -n 80 "' + LOG_FILE + '" 2>/dev/null || true',
     'exit 1'
   ].join('; ').replace(' &; for', ' & for');
 
-  const script = 'flock /tmp/maof-scraper-start.lock bash -lc ' + JSON.stringify(startup);
-  await runChecked(sandbox, 'bash', ['-lc', script]);
+  const command = 'flock -n /tmp/maof-scraper-start.lock bash -lc ' +
+    JSON.stringify(startupScript) +
+    ' >> ' + JSON.stringify(LOG_FILE + '.startup') + ' 2>&1';
+
+  // Startup also runs detached and under a non-blocking lock. The next poll
+  // will see the healthy endpoint and proceed with the requested operation.
+  await sandbox.runCommand({
+    cmd: 'bash',
+    args: ['-lc', command],
+    env: PLAYWRIGHT_ENV,
+    detached: true
+  });
+  return false;
 };
 
-// The scraper process does not survive a Sandbox session stop. Reinstall only
-// when its files are absent, and start + health-check it on every new session.
 const getEngine = async () => {
   const sandbox = await Sandbox.getOrCreate({
     name: 'maps-engine',
     resume: true,
     timeout: 900_000
   });
-
-  // Lifecycle hooks alone are insufficient: a session can remain active after
-  // its child process exits. Verify/restart the engine on every API request.
-  await startEngine(sandbox);
-  return sandbox;
+  const ready = await startEngine(sandbox);
+  return { sandbox, ready };
 };
 
 // Only calls the private, fixed loopback service. No ports are exposed publicly.
@@ -100,9 +123,15 @@ export default async function handler(req, res) {
   if (req.method === 'POST' && path !== '/api/v1/jobs') return res.status(405).end();
 
   try {
-    const sandbox = await getEngine();
-    let body = null;
+    const { sandbox, ready } = await getEngine();
+    if (!ready) {
+      res.setHeader('Retry-After', '5');
+      return res.status(503).json({
+        message: 'O motor está sendo preparado. Aguarde alguns segundos e tente novamente.'
+      });
+    }
 
+    let body = null;
     if (req.method === 'POST') {
       const input = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
       if (!input || !Array.isArray(input.keywords) || input.keywords.length < 1 || input.keywords.length > 3 ||
