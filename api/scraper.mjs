@@ -23,8 +23,15 @@ export default async function handler(req, res) {
   if(!/^\/api\/v1\/jobs(?:\/[a-f0-9-]+(?:\/download)?)?$/.test(path) || !['GET','POST','DELETE'].includes(req.method)) return res.status(400).json({message:'Operação inválida.'});
   if(req.method==='POST' && path!=='/api/v1/jobs') return res.status(405).end();
   try {
-    const s = await Sandbox.get({name:'maps-engine',resume:true,onResume:start});
-    await start(s);
+    // getOrCreate recreates a named Sandbox if its persisted snapshot has expired
+    // or is missing, instead of failing every request with SNAPSHOT_NOT_FOUND (410).
+    // Start the scraper on both the first boot and every resumed session.
+    const s = await Sandbox.getOrCreate({
+      name: 'maps-engine',
+      resume: true,
+      onCreate: start,
+      onResume: start
+    });
     let body=null;
     if(req.method==='POST') {
       const input=typeof req.body==='string'?JSON.parse(req.body):req.body;
