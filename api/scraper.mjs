@@ -54,7 +54,7 @@ const startEngine = async (sandbox) => {
   const startup = [
     'if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi',
     `nohup "${SCRAPER_BIN}" -web -addr 127.0.0.1:8080 -data-folder "${DATA_DIR}" >> "${LOG_FILE}" 2>&1 </dev/null &`,
-    'for i in $(seq 1 45); do if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi; sleep 1; done',
+    'for i in {1..45}; do if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi; sleep 1; done',
     'echo "Scraper did not become healthy. Recent engine log:"',
     'tail -n 80 "' + LOG_FILE + '" 2>/dev/null || true',
     'exit 1'
