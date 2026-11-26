@@ -88,14 +88,18 @@ const startEngine = async (sandbox) => {
     detached: true
   });
 
-  const ready = await sandbox.runCommand('bash', [
-    '-lc',
-    'for i in $(seq 1 45); do ' +
-    'if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi; ' +
-    'sleep 1; done; ' +
-    'echo "Scraper did not become healthy. Recent engine log:"; ' +
-    'tail -n 80 "' + LOG_FILE + '" 2>/dev/null || true; exit 1'
-  ], { env: PLAYWRIGHT_ENV });
+  const ready = await sandbox.runCommand({
+    cmd: 'bash',
+    args: [
+      '-lc',
+      'for i in $(seq 1 45); do ' +
+      'if curl -fsS --max-time 3 http://127.0.0.1:8080/api/v1/jobs >/dev/null; then exit 0; fi; ' +
+      'sleep 1; done; ' +
+      'echo "Scraper did not become healthy. Recent engine log:"; ' +
+      'tail -n 80 "' + LOG_FILE + '" 2>/dev/null || true; exit 1'
+    ],
+    env: PLAYWRIGHT_ENV
+  });
 
   if (ready.exitCode !== 0) {
     throw new Error((await ready.stderr()).slice(-3000) || (await ready.stdout()).slice(-5000));
